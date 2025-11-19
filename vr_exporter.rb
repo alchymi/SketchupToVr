@@ -12,7 +12,7 @@ module MyCompany
   module VrExporter
 
     PLUGIN_NAME    = "VR Exporter"
-    API_UPLOAD_URL = "http://localhost:4444/upload_glb.php"
+    API_UPLOAD_URL = "https://glbup.funtools.cloud/upload_glb.php"
     CODE_LENGTH    = 4  # 4 caractères (A-Z, 0-9)
 
     def self.export_and_upload

@@ -7,7 +7,7 @@ services:
     ports:
       - "4444:80"
     environment:
-      - BASE_PUBLIC_URL=https://glpup.funtools.cloud/uploads_glb
+      - BASE_PUBLIC_URL=https://glbup.funtools.cloud/uploads_glb
     volumes:
       - sketchup_data:/var/www/html/uploads_glb
 
