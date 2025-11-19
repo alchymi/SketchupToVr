@@ -5,7 +5,7 @@ services:
     build: .
     container_name: sketchup-glb-api
     ports:
-      - "4444:80"
+      - "8088:80"
     environment:
       - BASE_PUBLIC_URL=https://glbup.funtools.cloud/uploads_glb
     volumes:
