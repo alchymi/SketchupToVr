@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  sketchup-api:
+    build: .
+    container_name: sketchup-glb-api
+    ports:
+      - "4444:80"
+    environment:
+      - BASE_PUBLIC_URL=https://glpup.funtools.cloud/uploads_glb
+    volumes:
+      - sketchup_data:/var/www/html/uploads_glb
+
+volumes:
+  sketchup_data:
