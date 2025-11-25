@@ -39,7 +39,7 @@ if (!$secretKey) {
 }
 
 // Anti-replay : timestamp max 60s
-if (abs(time() - (int)$timestamp) > 60) {
+if (abs(time() - (int)$timestamp) > 600) {
     json_response(403, "Timestamp expiré.");
 }
 
