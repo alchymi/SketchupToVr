@@ -5,116 +5,100 @@ require_once __DIR__ . '/src/helpers.php';
 
 handle_cors();
 
-// ------------------------------------------------------------
-// Récupération des Public Keys (depuis Docker)
-// ------------------------------------------------------------
-$publicKeys = array_filter(array_map('trim', explode(',', getenv('PUBLIC_KEYS') ?: '')));
+// ---------------------------------------------------------
+// Charger les API Keys autorisées depuis Docker
+// ---------------------------------------------------------
+$apiKeys = array_filter(array_map('trim', explode(',', getenv('API_KEYS') ?: '')));
 
-if (empty($publicKeys)) {
-    json_response(500, "Configuration invalide : aucune PUBLIC_KEY.");
+if (empty($apiKeys)) {
+    json_response(500, "Configuration invalide : aucune API key définie.");
 }
 
-// ------------------------------------------------------------
-// Headers HMAC envoyés par le plugin SketchUp
-// ------------------------------------------------------------
-$pubKey    = $_SERVER['HTTP_X_API_KEY']       ?? null;
-$timestamp = $_SERVER['HTTP_X_API_TIMESTAMP'] ?? null;
-$signature = $_SERVER['HTTP_X_API_SIGNATURE'] ?? null;
+// ---------------------------------------------------------
+// Vérification de l’API KEY envoyée
+// ---------------------------------------------------------
+$providedKey = $_SERVER['HTTP_X_API_KEY'] ?? null;
 
-if (!$pubKey || !$timestamp || !$signature) {
-    json_response(400, "Headers HMAC manquants.");
+if (!$providedKey || !in_array($providedKey, $apiKeys, true)) {
+    json_response(403, "API Key invalide.");
 }
 
-if (!in_array($pubKey, $publicKeys)) {
-    json_response(403, "Clé API inconnue.");
-}
+$apiFilter = substr($providedKey, 0, 3);
 
-// ------------------------------------------------------------
-// Récupération du SECRET lié à cette clé publique
-// ------------------------------------------------------------
-$secretKey = getenv("SECRET_" . $pubKey);
+// ---------------------------------------------------------
+ensure_upload_dir();
 
-if (!$secretKey) {
-    json_response(500, "Secret introuvable pour la clé $pubKey.");
-}
-
-// Anti-replay : timestamp max 60s
-if (abs(time() - (int)$timestamp) > 600) {
-    json_response(403, "Timestamp expiré.");
-}
-
-// ------------------------------------------------------------
-// Vérification du fichier (obligatoire avant HMAC)
-// ------------------------------------------------------------
-if (!isset($_FILES['file'])) {
-    json_response(400, "Fichier manquant.");
-}
-
-$fileTmp = $_FILES['file']['tmp_name'];
-$fileHash = hash_file("sha256", $fileTmp);
-
-// ------------------------------------------------------------
-// Vérification HMAC SHA256
-// payload = timestamp:code:filehash
-// ------------------------------------------------------------
-$code = $_POST['code'] ?? "";
-if (!$code || !preg_match('/^[A-Z0-9]{4}$/', $code)) {
+// ----- CODE -----
+$code = null;
+if (isset($_POST['code']) && preg_match('/^[A-Z0-9]{4}$/', $_POST['code'])) {
+    $code = strtoupper($_POST['code']);
+} else {
     $code = generate_code(4);
     $codeGeneratedServerSide = true;
-} else {
-    $codeGeneratedServerSide = false;
 }
 
-$payload  = "{$timestamp}:{$code}:{$fileHash}";
-$expected = hash_hmac("sha256", $payload, $secretKey);
-
-if (!hash_equals($expected, $signature)) {
-    json_response(403, "Signature HMAC invalide.");
+// ----- FICHIER -----
+if (!isset($_FILES['file'])) {
+    json_response(400, 'Fichier manquant.');
 }
 
-// ------------------------------------------------------------
-// Gestion upload final
-// ------------------------------------------------------------
-ensure_upload_dir();
+$file = $_FILES['file'];
+
+if ($file['error'] !== UPLOAD_ERR_OK) {
+    json_response(400, 'Erreur upload (code ' . $file['error'] . ').');
+}
+
+if ($file['size'] <= 0) {
+    json_response(400, 'Fichier vide.');
+}
+
+$ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+if ($ext !== 'glb') {
+    json_response(400, 'Seuls les fichiers .glb sont acceptés.');
+}
 
 $timestampName = date('Ymd_His');
 $finalFilename = $code . '_' . $timestampName . '.glb';
 $finalPath     = UPLOAD_DIR . '/' . $finalFilename;
 
-if (!move_uploaded_file($fileTmp, $finalPath)) {
-    json_response(500, "Échec sauvegarde fichier.");
+if (!move_uploaded_file($file['tmp_name'], $finalPath)) {
+    json_response(500, 'Impossible de sauvegarder le fichier.');
 }
 
 $fileUrl = rtrim(base_public_url(), '/') . '/' . $finalFilename;
 
-// ------------------------------------------------------------
-// Mise à jour manifest
-// ------------------------------------------------------------
+// ----- MANIFEST -----
 $manifest = load_manifest();
 
 $entry = [
     'code'        => $code,
     'file_name'   => $finalFilename,
     'file_url'    => $fileUrl,
-    'size_bytes'  => $_FILES['file']['size'],
+    'size_bytes'  => $file['size'],
     'uploaded_at' => date('c'),
-    'filter'      => substr($pubKey, 0, 3)
+    'filter'      => $apiFilter
 ];
 
-if ($codeGeneratedServerSide) {
+if (!empty($codeGeneratedServerSide)) {
     $entry['server_generated_code'] = true;
 }
 
 $manifest[] = $entry;
+
 save_manifest($manifest);
 
-// ------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Nettoyage automatique (fichiers plus vieux que 7 jours)
+// ---------------------------------------------------------------------
+clean_old_files(7);
+
+// ---------------------------------------------------------------------
 json_response(200, "Upload réussi.", $entry);
 
 
-// -------------------------------------------------------------------------
-// AUTO-CLEAN : supprimer les fichiers de plus de 7 jours + nettoyer manifest
-// -------------------------------------------------------------------------
+// =====================================================================
+// SUPPRESSION AUTOMATIQUE DES VIEUX FICHIERS
+// =====================================================================
 function clean_old_files(int $days = 7): void
 {
     $manifest = load_manifest();
@@ -126,25 +110,22 @@ function clean_old_files(int $days = 7): void
 
         if (!isset($entry['uploaded_at'])) continue;
 
-        $uploadedTs = strtotime($entry['uploaded_at']);
-        if ($uploadedTs === false) continue;
+        $ts = strtotime($entry['uploaded_at']);
+        if ($ts === false) continue;
 
-        if ($uploadedTs < $cutoff) {
+        if ($ts < $cutoff) {
 
-            // Fichier à supprimer
+            // Supprimer fichier
             $filePath = UPLOAD_DIR . '/' . $entry['file_name'];
-
             if (file_exists($filePath)) {
                 @unlink($filePath);
             }
 
-            // On supprime aussi du manifest
             unset($manifest[$index]);
             $changed = true;
         }
     }
 
-    // Réindexation + sauvegarde du manifest si modifié
     if ($changed) {
         $manifest = array_values($manifest);
         save_manifest($manifest);

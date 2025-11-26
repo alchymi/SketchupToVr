@@ -1,6 +1,7 @@
 # vr_exporter.rb
 #
-# Plugin SketchUp : Export GLB + Upload sécurisé (HMAC SHA256)
+# Plugin SketchUp : Export GLB + Upload via API Key
+# Version simple & stable (sans HMAC)
 # by LMDDC
 
 require "sketchup.rb"
@@ -9,59 +10,50 @@ require "net/http"
 require "uri"
 require "json"
 require "fileutils"
-require "openssl"
-require "digest"
 
 module LMDDC
   module VrExporter
 
-    PLUGIN_NAME       = "VR Exporter"
-    API_UPLOAD_URL    = "https://glbup.funtools.cloud/upload_glb.php"
-    CODE_LENGTH       = 4
+    PLUGIN_NAME    = "VR Exporter"
+    API_UPLOAD_URL = "https://glbup.funtools.cloud/upload_glb.php"
+    CODE_LENGTH    = 4
 
-    CONFIG_DIR        = File.join(ENV["APPDATA"].to_s, "VRExporter")
-    CONFIG_FILE       = File.join(CONFIG_DIR, "config.json")
-    SECRET_FILE       = File.join(CONFIG_DIR, "secret.key")
+    CONFIG_DIR     = File.join(ENV["APPDATA"].to_s, "VRExporter")
+    CONFIG_FILE    = File.join(CONFIG_DIR, "config.json")
 
     # ----------------------------------------------------------------------
-    # Charger la config (public key) et clé secrète (HMAC)
+    # Lecture / Demande API Key
     # ----------------------------------------------------------------------
-    def self.get_credentials
-      unless File.exist?(CONFIG_FILE)
-        public_key = UI.inputbox(["Public API Key :"], [""])&.first
-        if public_key.nil? || public_key.strip.empty?
-          UI.messagebox("Aucune Public Key fournie. Annulation.")
-          return nil
+    def self.get_api_key
+      if File.exist?(CONFIG_FILE)
+        begin
+          data = JSON.parse(File.read(CONFIG_FILE))
+          return data["api_key"] if data["api_key"] && !data["api_key"].empty?
+        rescue
         end
-
-        FileUtils.mkdir_p(CONFIG_DIR)
-        File.write(CONFIG_FILE, JSON.pretty_generate({ public_key: public_key }))
       end
 
-      unless File.exist?(SECRET_FILE)
-        secret = UI.inputbox(["Secret Key (HMAC) :"], [""])&.first
-        if secret.nil? || secret.strip.empty?
-          UI.messagebox("Aucune Secret Key fournie. Annulation.")
-          return nil
-        end
+      # Demande à l'utilisateur
+      key = UI.inputbox(["Entrez votre API Key :"], [""])&.first
 
-        File.write(SECRET_FILE, secret)
+      if key.nil? || key.strip.empty?
+        UI.messagebox("Aucune API Key fournie. Annulation.")
+        return nil
       end
 
-      cfg = JSON.parse(File.read(CONFIG_FILE))
-      public_key = cfg["public_key"]
-      secret_key = File.read(SECRET_FILE).strip
+      FileUtils.mkdir_p(CONFIG_DIR)
+      File.write(CONFIG_FILE, JSON.pretty_generate({ api_key: key }))
 
-      return [public_key, secret_key]
+      key
     end
 
     # ----------------------------------------------------------------------
-    # Popup HTML LMDDC
+    # Popup HTML LMDDC (code en très grand)
     # ----------------------------------------------------------------------
     def self.show_big_message(code)
       html = <<-HTML
         <html>
-          <body style="
+        <body style="
             font-family:Arial;
             background:#ff7a00;
             color:white;
@@ -69,35 +61,30 @@ module LMDDC
             text-align:center;">
             
             <img src="https://www.lmddc.lu/images/logo_lmddc_white.svg"
-                 width="160" style="margin-bottom:15px;" />
+                 width="120"
+                 style="margin-bottom:25px;" />
 
-            <h2 style="font-size:10px; font-weight:normal;">
-              Voici le code à ouvrir dans la VR :
-            </h2>
+            <h2 style="font-size:22px; font-weight:normal;">Voici le code à ouvrir dans la VR :</h2>
 
-            <div style="font-size:72px; font-weight:bold; margin:30px 0;">
-              #{code}
+            <div style="font-size:72px; font-weight:bold; margin:30px 0;">#{code}</div>
+
+            <div style="font-size:16px; opacity:0.9;">Made with love by LMDDC ❤️</div>
+
+            <div style="margin-top:35px;">
+                <button onclick="window.close()"
+                  style="
+                    padding:12px 25px;
+                    font-size:16px;
+                    background:white;
+                    color:#ff7a00;
+                    border:none;
+                    border-radius:6px;
+                    cursor:pointer;">
+                  Fermer
+                </button>
             </div>
 
-            <div style="font-size:10px; opacity:0.9;">
-              Made with love by LMDDC ❤️
-            </div>
-
-            <div style="margin-top:15px;">
-              <button onclick="window.close()"
-                style="
-                  padding:8px 8px;
-                  font-size:16px;
-                  background:white;
-                  color:#ff7a00;
-                  border:none;
-                  border-radius:6px;
-                  cursor:pointer;">
-                Fermer
-              </button>
-            </div>
-
-          </body>
+        </body>
         </html>
       HTML
 
@@ -112,6 +99,8 @@ module LMDDC
     end
 
     # ----------------------------------------------------------------------
+    # Export + Upload
+    # ----------------------------------------------------------------------
     def self.export_and_upload
       model = Sketchup.active_model
       unless model
@@ -119,8 +108,8 @@ module LMDDC
         return
       end
 
-      public_key, secret_key = get_credentials
-      return unless public_key && secret_key
+      api_key = get_api_key
+      return unless api_key
 
       code = generate_code(CODE_LENGTH)
 
@@ -133,12 +122,12 @@ module LMDDC
         return
       end
 
-      response = upload_glb(glb_path, code, public_key, secret_key)
+      response = upload_glb(glb_path, code, api_key)
 
       if response.is_a?(Net::HTTPSuccess)
         begin
           data = JSON.parse(response.body)
-          display_code = data["data"]["code"] rescue code
+          display_code = data.dig("data", "code") || code
 
           show_big_message(display_code)
           copy_to_clipboard_safe(display_code)
@@ -147,7 +136,7 @@ module LMDDC
           UI.messagebox("Upload OK mais JSON invalide : #{e.message}")
         end
       else
-        UI.messagebox("Erreur upload : #{response.code}")
+        UI.messagebox("Erreur upload : #{response.code}\n#{response.body}")
       end
 
     rescue => e
@@ -157,23 +146,19 @@ module LMDDC
     end
 
     # ----------------------------------------------------------------------
-    def self.upload_glb(file_path, code, public_key, secret_key)
+    # Upload simple via API Key
+    # ----------------------------------------------------------------------
+    def self.upload_glb(file_path, code, api_key)
       uri = URI.parse(API_UPLOAD_URL)
 
-      timestamp   = Time.now.to_i.to_s
-      file_hash   = Digest::SHA256.file(file_path).hexdigest
-      payload     = "#{timestamp}:#{code}:#{file_hash}"
-      signature   = OpenSSL::HMAC.hexdigest("SHA256", secret_key, payload)
-
       request = Net::HTTP::Post.new(uri)
-      request["X-API-KEY"]       = public_key
-      request["X-API-TIMESTAMP"] = timestamp
-      request["X-API-SIGNATURE"] = signature
+      request["X-API-KEY"] = api_key
 
       form_data = [
         ["code", code],
         ["file", File.open(file_path)]
       ]
+
       request.set_form(form_data, "multipart/form-data")
 
       Net::HTTP.start(uri.hostname, uri.port,
@@ -184,8 +169,7 @@ module LMDDC
 
     # ----------------------------------------------------------------------
     def self.export_glb(model, glb_path)
-      options = { triangulated_faces: true, texture_maps: true }
-      model.export(glb_path, options)
+      model.export(glb_path, triangulated_faces: true, texture_maps: true)
     end
 
     def self.cleanup_tmp(dir)
@@ -197,7 +181,7 @@ module LMDDC
       Dir.rmdir(dir) rescue nil
     end
 
-    def self.generate_code(length=4)
+    def self.generate_code(length)
       chars = ('A'..'Z').to_a + ('0'..'9').to_a
       Array.new(length) { chars.sample }.join
     end
