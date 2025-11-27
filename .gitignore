@@ -1,0 +1,8 @@
+# --- ENV FILES -----------------------------------------------------
+.env
+ 
+
+# --- UNITY FOLDER TO EXCLUDE ---------------------------------------
+SketchupToVRViewer/
+SketchupToVRViewer/*
+SketchupToVRViewer/**

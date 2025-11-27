@@ -66,7 +66,7 @@ if (!move_uploaded_file($file['tmp_name'], $finalPath)) {
     json_response(500, 'Impossible de sauvegarder le fichier.');
 }
 
-$fileUrl = rtrim(base_public_url(), '/') . '/' . $finalFilename;
+$fileUrl = base_public_url() . '/' . $finalFilename;
 
 // ----- MANIFEST -----
 $manifest = load_manifest();
@@ -74,7 +74,6 @@ $manifest = load_manifest();
 $entry = [
     'code'        => $code,
     'file_name'   => $finalFilename,
-    'file_url'    => $fileUrl,
     'size_bytes'  => $file['size'],
     'uploaded_at' => date('c'),
     'filter'      => $apiFilter

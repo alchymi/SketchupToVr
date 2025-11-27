@@ -6,11 +6,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: sketchup-glb-api
+
     environment:
-      BASE_PUBLIC_URL: https://glbup.funtools.cloud/uploads_glb
-      API_KEYS: jsb-123456,abc-987654,lmd-555000
+      BASE_PUBLIC_URL: ${BASE_PUBLIC_URL}
+      API_KEYS: ${API_KEYS}
+
     ports:
       - "8088:80"
+
     volumes:
       - sketchup_data:/var/www/html/uploads_glb
 

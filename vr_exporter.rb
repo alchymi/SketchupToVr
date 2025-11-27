@@ -1,8 +1,7 @@
 # vr_exporter.rb
 #
-# Plugin SketchUp : Export GLB + Upload API Key
-# Version simple & stable
-# by LMDDC
+# Plugin SketchUp : Export GLB + Upload vers serveur configuré
+# par LMDDC
 
 require "sketchup.rb"
 require "tmpdir"
@@ -15,37 +14,56 @@ module LMDDC
   module VrExporter
 
     PLUGIN_NAME    = "VR Exporter"
-    API_UPLOAD_URL = "http://localhost:8088/upload_glb.php"
     CODE_LENGTH    = 4
 
     CONFIG_DIR     = File.join(ENV["APPDATA"].to_s, "VRExporter")
     CONFIG_FILE    = File.join(CONFIG_DIR, "config.json")
 
-    # ---------------------------------------------
-    # Récupération API Key locale
-    # ---------------------------------------------
-    def self.get_api_key
+    # ----------------------------------------------------------
+    # Charger configuration (clé + URL)
+    # ----------------------------------------------------------
+    def self.get_config
+      # Lecture config existante
       if File.exist?(CONFIG_FILE)
-        data = JSON.parse(File.read(CONFIG_FILE)) rescue {}
-        return data["api_key"] if data["api_key"]
+        begin
+          cfg = JSON.parse(File.read(CONFIG_FILE))
+          return cfg if cfg["api_key"] && cfg["api_url"]
+        rescue
+        end
       end
 
-      key = UI.inputbox(["Entrez votre API Key :"], [""])&.first
+      # Sinon → demander les 2 valeurs
+      prompts = ["Entrez votre API Key :", "Entrez l'URL d'upload :"]
+      defaults = ["", "http://localhost:8088/upload_glb.php"]
 
-      if key.nil? || key.strip.empty?
-        UI.messagebox("Aucune API Key fournie.")
+      result = UI.inputbox(prompts, defaults, "Configuration VR Exporter")
+
+      if result.nil?
+        UI.messagebox("Configuration annulée.")
         return nil
       end
 
-      FileUtils.mkdir_p(CONFIG_DIR)
-      File.write(CONFIG_FILE, JSON.pretty_generate({ api_key: key }))
+      api_key, api_url = result
 
-      key
+      if api_key.strip.empty? || api_url.strip.empty?
+        UI.messagebox("API Key ou URL invalide.")
+        return nil
+      end
+
+      cfg = {
+        "api_key" => api_key.strip,
+        "api_url" => api_url.strip
+      }
+
+      FileUtils.mkdir_p(CONFIG_DIR)
+      File.write(CONFIG_FILE, JSON.pretty_generate(cfg))
+
+      cfg
     end
 
-    # ---------------------------------------------
-    # Popup HTML LMDDC
-    # ---------------------------------------------
+    # ----------------------------------------------------------
+    # Popup HTML LMDDC (code géant)
+    # ----------------------------------------------------------
     def self.show_big_message(code)
       html = <<-HTML
         <html>
@@ -59,21 +77,21 @@ module LMDDC
             <img src="https://www.lmddc.lu/images/logo_lmddc_white.svg"
                  width="180" style="margin-bottom:15px;" />
 
-            <h2 style="font-size:12px;">Voici le code à ouvrir dans la VR :</h2>
+            <h2 style="font-size:14px;">Voici le code à ouvrir dans la VR :</h2>
 
-            <div style="font-size:72px; font-weight:bold; margin:10px 0;">#{code}</div>
-
-            <div style="font-size:12px; opacity:0.9;">Made with love by LMDDC ❤️</div>
+            <div style="font-size:72px; font-weight:bold; margin:15px 0;">
+              #{code}
+            </div>
 
             <button onclick="window.close()"
               style="
-                margin-top:5px;
-                padding:12px 5px;
-                font-size:20px;
+                margin-top:15px;
+                padding:14px 20px;
+                font-size:18px;
                 background:white;
                 color:#ff7a00;
                 border:none;
-                border-radius:6px;
+                border-radius:8px;
                 cursor:pointer;">
               Fermer
             </button>
@@ -92,15 +110,18 @@ module LMDDC
       dialog.show
     end
 
-    # ---------------------------------------------
+    # ----------------------------------------------------------
     # Export + Upload
-    # ---------------------------------------------
+    # ----------------------------------------------------------
     def self.export_and_upload
       model = Sketchup.active_model
       return UI.messagebox("Aucun modèle actif.") unless model
 
-      api_key = get_api_key
-      return unless api_key
+      config = get_config
+      return unless config
+
+      api_key = config["api_key"]
+      api_url = config["api_url"]
 
       code = generate_code(CODE_LENGTH)
 
@@ -113,19 +134,20 @@ module LMDDC
         return
       end
 
-      response = upload_glb(glb_path, code, api_key)
+      response = upload_glb(glb_path, code, api_key, api_url)
 
       if response.is_a?(Net::HTTPSuccess)
         begin
-          data = JSON.parse(response.body)
-          display_code = data.dig("data", "code") || code
+          data   = JSON.parse(response.body)
+          result_code = data.dig("data", "code") || code
 
-          show_big_message(display_code)
-          copy_to_clipboard_safe(display_code)
+          show_big_message(result_code)
+          copy_to_clipboard_safe(result_code)
 
         rescue => e
           UI.messagebox("Upload OK mais JSON invalide : #{e.message}")
         end
+
       else
         UI.messagebox("Erreur upload : #{response.code}\n#{response.body}")
       end
@@ -140,11 +162,11 @@ module LMDDC
       end
     end
 
-    # ---------------------------------------------
-    # Upload via API Key simple
-    # ---------------------------------------------
-    def self.upload_glb(file_path, code, api_key)
-      uri = URI.parse(API_UPLOAD_URL)
+    # ----------------------------------------------------------
+    # Upload avec URL custom
+    # ----------------------------------------------------------
+    def self.upload_glb(file_path, code, api_key, api_url)
+      uri = URI.parse(api_url)
 
       request = Net::HTTP::Post.new(uri)
       request["X-API-KEY"] = api_key
@@ -161,7 +183,7 @@ module LMDDC
       end
     end
 
-    # ---------------------------------------------
+    # ----------------------------------------------------------
     def self.generate_code(n)
       chars = ('A'..'Z').to_a + ('0'..'9').to_a
       Array.new(n) { chars.sample }.join
@@ -171,6 +193,7 @@ module LMDDC
       UI.copy_to_clipboard(text) rescue nil
     end
 
+    # ----------------------------------------------------------
     unless file_loaded?(__FILE__)
       UI.menu("Plugins").add_item("#{PLUGIN_NAME} – Export VR") { export_and_upload }
       file_loaded(__FILE__)

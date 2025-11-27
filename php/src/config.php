@@ -13,6 +13,10 @@ const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200 Mo
  * URL publique de base vers le dossier des GLB.
  * On peut la surcharger avec la variable d'env BASE_PUBLIC_URL.
  */
+/**
+ * URL publique de base vers le dossier des GLB.
+ * On peut la surcharger avec la variable d'env BASE_PUBLIC_URL.
+ */
 function base_public_url(): string {
     $env = getenv('BASE_PUBLIC_URL');
     if ($env && $env !== '') {
