@@ -6,16 +6,17 @@ require_once __DIR__ . '/src/helpers.php';
 handle_cors();
 
 // ---------------------------------------------------------
-// Charger les API Keys autorisées depuis Docker
+// Charger les API Keys autorisées
 // ---------------------------------------------------------
-$apiKeys = array_filter(array_map('trim', explode(',', getenv('API_KEYS') ?: '')));
+$rawKeys = getenv('API_KEYS') ?: '';
+$apiKeys = array_filter(array_map('trim', explode(',', $rawKeys)));
 
 if (empty($apiKeys)) {
     json_response(500, "Configuration invalide : aucune API key définie.");
 }
 
 // ---------------------------------------------------------
-// Vérification de l’API KEY envoyée
+// Vérification de la clé envoyée
 // ---------------------------------------------------------
 $providedKey = $_SERVER['HTTP_X_API_KEY'] ?? null;
 
@@ -29,12 +30,12 @@ $apiFilter = substr($providedKey, 0, 3);
 ensure_upload_dir();
 
 // ----- CODE -----
-$code = null;
-if (isset($_POST['code']) && preg_match('/^[A-Z0-9]{4}$/', $_POST['code'])) {
-    $code = strtoupper($_POST['code']);
-} else {
+if (!isset($_POST['code']) || !preg_match('/^[A-Z0-9]{4}$/', $_POST['code'])) {
     $code = generate_code(4);
     $codeGeneratedServerSide = true;
+} else {
+    $code = strtoupper($_POST['code']);
+    $codeGeneratedServerSide = false;
 }
 
 // ----- FICHIER -----
@@ -79,32 +80,29 @@ $entry = [
     'filter'      => $apiFilter
 ];
 
-if (!empty($codeGeneratedServerSide)) {
+if ($codeGeneratedServerSide) {
     $entry['server_generated_code'] = true;
 }
 
 $manifest[] = $entry;
-
 save_manifest($manifest);
 
-// ---------------------------------------------------------------------
-// Nettoyage automatique (fichiers plus vieux que 7 jours)
-// ---------------------------------------------------------------------
+// ----- NETTOYAGE AUTO (7 jours) -----
 clean_old_files(7);
 
-// ---------------------------------------------------------------------
+// ---------------------------------------------------------
 json_response(200, "Upload réussi.", $entry);
 
 
 // =====================================================================
-// SUPPRESSION AUTOMATIQUE DES VIEUX FICHIERS
+// SUPPRESSION AUTOMATIQUE DES FICHIERS > X jours
 // =====================================================================
 function clean_old_files(int $days = 7): void
 {
     $manifest = load_manifest();
     $changed = false;
 
-    $cutoff = time() - ($days * 86400); // 7 jours
+    $cutoff = time() - ($days * 86400);
 
     foreach ($manifest as $index => $entry) {
 
@@ -115,10 +113,9 @@ function clean_old_files(int $days = 7): void
 
         if ($ts < $cutoff) {
 
-            // Supprimer fichier
-            $filePath = UPLOAD_DIR . '/' . $entry['file_name'];
-            if (file_exists($filePath)) {
-                @unlink($filePath);
+            $path = UPLOAD_DIR . '/' . $entry['file_name'];
+            if (file_exists($path)) {
+                @unlink($path);
             }
 
             unset($manifest[$index]);

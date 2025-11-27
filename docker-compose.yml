@@ -2,16 +2,15 @@ version: "3.8"
 
 services:
   sketchup-api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: sketchup-glb-api
+    environment:
+      BASE_PUBLIC_URL: https://glbup.funtools.cloud/uploads_glb
+      API_KEYS: jsb-123456,abc-987654,lmd-555000
     ports:
       - "8088:80"
-    environment:
-      - BASE_PUBLIC_URL=https://glbup.funtools.cloud/uploads_glb
-      - PUBLIC_KEYS=jsb,abc,lmd
-      - SECRET_jsb=U8x8k29sS0f8293nskf882jkGx8g
-      - SECRET_abc=FJei90ds0xZP91ms9Pp291mslqW
-      - SECRET_lmd=F32hso0d9SKW029kkd0skw9Fdk2
     volumes:
       - sketchup_data:/var/www/html/uploads_glb
 

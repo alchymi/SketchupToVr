@@ -1,7 +1,7 @@
 # vr_exporter.rb
 #
-# Plugin SketchUp : Export GLB + Upload via API Key
-# Version simple & stable (sans HMAC)
+# Plugin SketchUp : Export GLB + Upload API Key
+# Version simple & stable
 # by LMDDC
 
 require "sketchup.rb"
@@ -15,29 +15,25 @@ module LMDDC
   module VrExporter
 
     PLUGIN_NAME    = "VR Exporter"
-    API_UPLOAD_URL = "https://glbup.funtools.cloud/upload_glb.php"
+    API_UPLOAD_URL = "http://localhost:8088/upload_glb.php"
     CODE_LENGTH    = 4
 
     CONFIG_DIR     = File.join(ENV["APPDATA"].to_s, "VRExporter")
     CONFIG_FILE    = File.join(CONFIG_DIR, "config.json")
 
-    # ----------------------------------------------------------------------
-    # Lecture / Demande API Key
-    # ----------------------------------------------------------------------
+    # ---------------------------------------------
+    # Récupération API Key locale
+    # ---------------------------------------------
     def self.get_api_key
       if File.exist?(CONFIG_FILE)
-        begin
-          data = JSON.parse(File.read(CONFIG_FILE))
-          return data["api_key"] if data["api_key"] && !data["api_key"].empty?
-        rescue
-        end
+        data = JSON.parse(File.read(CONFIG_FILE)) rescue {}
+        return data["api_key"] if data["api_key"]
       end
 
-      # Demande à l'utilisateur
       key = UI.inputbox(["Entrez votre API Key :"], [""])&.first
 
       if key.nil? || key.strip.empty?
-        UI.messagebox("Aucune API Key fournie. Annulation.")
+        UI.messagebox("Aucune API Key fournie.")
         return nil
       end
 
@@ -47,9 +43,9 @@ module LMDDC
       key
     end
 
-    # ----------------------------------------------------------------------
-    # Popup HTML LMDDC (code en très grand)
-    # ----------------------------------------------------------------------
+    # ---------------------------------------------
+    # Popup HTML LMDDC
+    # ---------------------------------------------
     def self.show_big_message(code)
       html = <<-HTML
         <html>
@@ -61,62 +57,57 @@ module LMDDC
             text-align:center;">
             
             <img src="https://www.lmddc.lu/images/logo_lmddc_white.svg"
-                 width="120"
-                 style="margin-bottom:25px;" />
+                 width="180" style="margin-bottom:15px;" />
 
-            <h2 style="font-size:22px; font-weight:normal;">Voici le code à ouvrir dans la VR :</h2>
+            <h2 style="font-size:12px;">Voici le code à ouvrir dans la VR :</h2>
 
-            <div style="font-size:72px; font-weight:bold; margin:30px 0;">#{code}</div>
+            <div style="font-size:72px; font-weight:bold; margin:10px 0;">#{code}</div>
 
-            <div style="font-size:16px; opacity:0.9;">Made with love by LMDDC ❤️</div>
+            <div style="font-size:12px; opacity:0.9;">Made with love by LMDDC ❤️</div>
 
-            <div style="margin-top:35px;">
-                <button onclick="window.close()"
-                  style="
-                    padding:12px 25px;
-                    font-size:16px;
-                    background:white;
-                    color:#ff7a00;
-                    border:none;
-                    border-radius:6px;
-                    cursor:pointer;">
-                  Fermer
-                </button>
-            </div>
+            <button onclick="window.close()"
+              style="
+                margin-top:5px;
+                padding:12px 5px;
+                font-size:20px;
+                background:white;
+                color:#ff7a00;
+                border:none;
+                border-radius:6px;
+                cursor:pointer;">
+              Fermer
+            </button>
 
         </body>
         </html>
       HTML
 
-      dlg = UI::HtmlDialog.new(
+      dialog = UI::HtmlDialog.new(
         dialog_title: "Code VR",
         width: 430,
-        height: 470,
+        height: 600,
         resizable: false
       )
-      dlg.set_html(html)
-      dlg.show
+      dialog.set_html(html)
+      dialog.show
     end
 
-    # ----------------------------------------------------------------------
+    # ---------------------------------------------
     # Export + Upload
-    # ----------------------------------------------------------------------
+    # ---------------------------------------------
     def self.export_and_upload
       model = Sketchup.active_model
-      unless model
-        UI.messagebox("Aucun modèle actif.")
-        return
-      end
+      return UI.messagebox("Aucun modèle actif.") unless model
 
       api_key = get_api_key
       return unless api_key
 
       code = generate_code(CODE_LENGTH)
 
-      tmp_dir  = Dir.mktmpdir("vr_exporter")
-      glb_path = File.join(tmp_dir, "scene_#{code}.glb")
+      tmp = Dir.mktmpdir("vr_exporter")
+      glb_path = File.join(tmp, "scene_#{code}.glb")
 
-      exported = export_glb(model, glb_path)
+      exported = model.export(glb_path, triangulated_faces: true, texture_maps: true)
       unless exported && File.exist?(glb_path)
         UI.messagebox("Échec export GLB.")
         return
@@ -139,62 +130,49 @@ module LMDDC
         UI.messagebox("Erreur upload : #{response.code}\n#{response.body}")
       end
 
-    rescue => e
-      UI.messagebox("Erreur plugin : #{e.message}")
     ensure
-      cleanup_tmp(tmp_dir)
+      if tmp && Dir.exist?(tmp)
+        Dir.foreach(tmp) do |f|
+          next if f == "." || f == ".."
+          File.delete(File.join(tmp, f)) rescue nil
+        end
+        Dir.rmdir(tmp) rescue nil
+      end
     end
 
-    # ----------------------------------------------------------------------
-    # Upload simple via API Key
-    # ----------------------------------------------------------------------
+    # ---------------------------------------------
+    # Upload via API Key simple
+    # ---------------------------------------------
     def self.upload_glb(file_path, code, api_key)
       uri = URI.parse(API_UPLOAD_URL)
 
       request = Net::HTTP::Post.new(uri)
       request["X-API-KEY"] = api_key
 
-      form_data = [
+      form = [
         ["code", code],
         ["file", File.open(file_path)]
       ]
 
-      request.set_form(form_data, "multipart/form-data")
+      request.set_form(form, "multipart/form-data")
 
-      Net::HTTP.start(uri.hostname, uri.port,
-                      use_ssl: uri.scheme == "https") do |http|
+      Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") do |http|
         http.request(request)
       end
     end
 
-    # ----------------------------------------------------------------------
-    def self.export_glb(model, glb_path)
-      model.export(glb_path, triangulated_faces: true, texture_maps: true)
-    end
-
-    def self.cleanup_tmp(dir)
-      return unless dir && Dir.exist?(dir)
-      Dir.foreach(dir) do |f|
-        next if f == "." || f == ".."
-        File.delete(File.join(dir, f)) rescue nil
-      end
-      Dir.rmdir(dir) rescue nil
-    end
-
-    def self.generate_code(length)
+    # ---------------------------------------------
+    def self.generate_code(n)
       chars = ('A'..'Z').to_a + ('0'..'9').to_a
-      Array.new(length) { chars.sample }.join
+      Array.new(n) { chars.sample }.join
     end
 
     def self.copy_to_clipboard_safe(text)
-      return unless UI.respond_to?(:copy_to_clipboard)
-      UI.copy_to_clipboard(text)
+      UI.copy_to_clipboard(text) rescue nil
     end
 
     unless file_loaded?(__FILE__)
-      UI.menu("Plugins").add_item("#{PLUGIN_NAME} – Export VR") {
-        self.export_and_upload
-      }
+      UI.menu("Plugins").add_item("#{PLUGIN_NAME} – Export VR") { export_and_upload }
       file_loaded(__FILE__)
     end
 
